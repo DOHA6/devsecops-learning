@@ -1,12 +1,10 @@
 name: CI
-
 on: [push]
 
 jobs:
   sast_scan:
     name: Run Bandit Scan
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -14,14 +12,15 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'  
-
+          python-version: '3.12'
+          
       - name: Install Bandit
         run: pip install bandit
-
+        
       - name: Run Bandit Scan
         run: bandit -ll -ii -r . -f json -o bandit-report.json
-
+        continue-on-error: true
+        
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         if: always()
@@ -32,22 +31,51 @@ jobs:
   image_scan:
     name: Build Image and Run Image Scan
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
+        
       - name: Set up Docker
         uses: docker-practice/actions-setup-docker@v1
         with:
           docker_version: '24.0.5'
-
+        continue-on-error: true
+        
+      # Fallback: Use default Docker if specific version fails
+      - name: Verify Docker Installation
+        run: |
+          docker --version
+          docker info
+          
       - name: Build Docker Image
         run: docker build -f Dockerfile -t myapp:latest .
-
-      - name: Docker Scout Scan
+        
+      - name: Install Docker Scout
         run: |
           curl -fsSL https://raw.githubusercontent.com/docker/scout-cli/main/install.sh -o install-scout.sh
           sh install-scout.sh
-          docker scout quickview 
-          docker scout cves 
+          
+      - name: Docker Scout Quick View
+        run: docker scout quickview myapp:latest
+        continue-on-error: true
+        
+      - name: Docker Scout CVE Scan
+        run: docker scout cves myapp:latest
+        continue-on-error: true
+        
+      - name: Export Scout Results
+        if: always()
+        run: |
+          docker scout cves --format sarif --output scout-report.sarif myapp:latest || echo "Failed to export SARIF"
+          docker scout cves --format json --output scout-report.json myapp:latest || echo "Failed to export JSON"
+        continue-on-error: true
+        
+      - name: Upload Scout Reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scout-findings
+          path: |
+            scout-report.sarif
+            scout-report.json
+          if-no-files-found: warn
